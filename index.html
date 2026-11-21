@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Guild Wars Board - v1.96</title>
+    <title>Guild Wars Board - v1.97</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 	<!-- Firebase App (Base SDK) -->
@@ -16,9 +16,9 @@
         <header class="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-amber-400 flex items-center gap-2">
-                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v1.96</span>
+                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v1.97</span>
                 </h1>
-                <p class="text-xs text-slate-400">v1.96: test mode</p>
+                <p class="text-xs text-slate-400">v1.97: displays war flags in the hero's battles</p>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
                 <span id="globalStatus" class="text-xs bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-slate-400">Database ready</span>
@@ -1057,12 +1057,26 @@ function mergeUniqueRows(existingRows, newRows) {
                 `).join('');
             }
 
+            function renderHeroFlagHTML() {
+                if (isTitanTeam) return '';
+                const cleanFlag = String(totemAbbrRaw || '').trim();
+                if (!cleanFlag) return '';
+                const flagLetter = cleanFlag.charAt(0);
+                const descText = String(totemSkillsRaw || '').trim();
+                const tooltipText = descText || `Flag: ${cleanFlag}`;
+
+                return `
+					<img src="heroes/flags/${escapeHtml(flagLetter)}.png" width="160" height="160" alt="${escapeHtml(flagLetter)}" title="${escapeHtml(tooltipText)}" class="w-[50px] h-[50px] object-contain shadow-md shrink-0 self-start" onerror="this.style.display='none';">                `;
+            }
+
             const totemsMarkup = renderTotemsHTML();
+            const flagMarkup = renderHeroFlagHTML();
             const containerClass = !isTitanTeam ? "flex items-end gap-2 pt-4" : "flex items-center gap-2";
 
             return `
                 <div class="${containerClass}">
                     ${isAttacker && isTitanTeam ? totemsMarkup : ''}
+                    ${isAttacker && !isTitanTeam ? flagMarkup : ''}
 
                     ${slotsArray.map(slot => {
                         let isEmpty = slot.name === '###';
@@ -1099,6 +1113,7 @@ function mergeUniqueRows(existingRows, newRows) {
                     }).join('')}
 
                     ${!isAttacker && isTitanTeam ? totemsMarkup : ''}
+                    ${!isAttacker && !isTitanTeam ? flagMarkup : ''}
                 </div>
             `;
         }
