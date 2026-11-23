@@ -2,13 +2,15 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Guild Wars Board - v1.97</title>
+    <title>Guild Wars Board - v1.98</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 	<!-- Firebase App (Base SDK) -->
 	<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 	<!-- Firebase Firestore -->
 	<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+	<!-- Champion Selector & Highlight Module -->
+	<script src="champion-selector.js"></script>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen p-6 font-sans">
     <div class="max-w-7xl mx-auto space-y-6">
@@ -16,9 +18,9 @@
         <header class="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-amber-400 flex items-center gap-2">
-                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v1.97</span>
+                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v1.98</span>
                 </h1>
-                <p class="text-xs text-slate-400">v1.97: displays war flags in the hero's battles</p>
+                <p class="text-xs text-slate-400">v1.98: displays attack suggestions</p>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
                 <span id="globalStatus" class="text-xs bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-slate-400">Database ready</span>
@@ -138,6 +140,9 @@
             titans: [],
             currentView: 'attacks'
         };
+
+        // Seuil de points requis pour considérer qu'un défenseur a déjà été vaincu par le champion sélectionné
+        const CHAMPION_WIN_POINTS_THRESHOLD = 20;
 
         const FORTIFICATIONS = [
             { name: "Mage Academy", slots: [1, 2], bonus: 40 },
@@ -1593,6 +1598,10 @@ function mergeUniqueRows(existingRows, newRows) {
             const warDateObj = extractDateForWar(appState.activeKey, data);
             let warDateJs = warDateObj.iso ? new Date(warDateObj.iso + 'T00:00:00Z') : new Date();
 
+            const activeChampion = typeof getSavedChampionName === 'function'
+                ? getSavedChampionName(getGuildChampionsList(ourSlots))
+                : '';
+
             const allKeys = getSortedWarKeys();
             const enemyWarKeys = allKeys.filter(k => getEnemyName(appState.wars[k]) === enemyName);
             const enemyWarIndex = enemyWarKeys.indexOf(appState.activeKey);
@@ -1937,6 +1946,10 @@ function mergeUniqueRows(existingRows, newRows) {
             let ourScoreColor = ourScore > enemyScore ? "text-emerald-400 font-black" : (enemyScore > ourScore ? "text-rose-400 font-black" : "text-amber-400 font-black");
             let enemyScoreColor = enemyScore > ourScore ? "text-emerald-400 font-black" : (ourScore > enemyScore ? "text-rose-400 font-black" : "text-amber-400 font-black");
 
+            const championSelectorMarkup = typeof renderChampionSelectorHTML === 'function'
+                ? renderChampionSelectorHTML(ourSlots, escapeHtml)
+                : '';
+
             dash.innerHTML = `
                 <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
                     <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col justify-between shadow-lg hover:border-amber-500/50 transition cursor-pointer group" onclick="openEnemyModal()" title="Click to choose an opponent">
@@ -1976,13 +1989,16 @@ function mergeUniqueRows(existingRows, newRows) {
                         <h2 class="text-base font-bold text-slate-200">
                             Fortifications Details <span class="text-xs font-normal text-slate-400 ml-2">(Click a row to view battle lineup)</span>
                         </h2>
-                        <div class="inline-flex bg-slate-950 p-1 rounded-lg border border-slate-800">
-                            <button onclick="switchView('attacks')" class="px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${appState.currentView === 'attacks' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}">
-                                ⚔️ Attacks
-                            </button>
-                            <button onclick="switchView('defenses')" class="px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${appState.currentView === 'defenses' ? 'bg-rose-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}">
-                                🛡️ Defenses
-                            </button>
+                        <div class="flex flex-wrap items-center gap-3">
+                            ${championSelectorMarkup}
+                            <div class="inline-flex bg-slate-950 p-1 rounded-lg border border-slate-800">
+                                <button onclick="switchView('attacks')" class="px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${appState.currentView === 'attacks' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}">
+                                    ⚔️ Attacks
+                                </button>
+                                <button onclick="switchView('defenses')" class="px-3 py-1.5 text-xs font-semibold rounded-md transition cursor-pointer ${appState.currentView === 'defenses' ? 'bg-rose-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'}">
+                                    🛡️ Defenses
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -2016,9 +2032,28 @@ function mergeUniqueRows(existingRows, newRows) {
 
                                             const isTitanBattle = atk.type === 'Titan';
 
+                                            const isBeatenByChampion =
+                                                appState.currentView === 'attacks' &&
+                                                Boolean(activeChampion) &&
+                                                typeof hasChampionBeatenDefender === 'function' &&
+                                                hasChampionBeatenDefender(
+                                                    activeChampion,
+                                                    atk.defId,
+                                                    atk.defender,
+                                                    atk.type,
+                                                    appState.heroes,
+                                                    appState.titans,
+                                                    CHAMPION_WIN_POINTS_THRESHOLD
+                                                );
+
+                                            const championHighlightClass =
+                                                typeof getChampionSlotHighlightClass === 'function'
+                                                    ? getChampionSlotHighlightClass(isBeatenByChampion)
+                                                    : '';
+
                                             if (atk.isUnattackedSlot) {
                                                 return `
-                                                <div onclick="openBattleModal('${atk.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs bg-slate-900/70 hover:bg-slate-850 hover:border-amber-500/40 px-3 py-2 rounded-lg border border-slate-800/70 gap-2 cursor-pointer transition group">
+                                                <div onclick="openBattleModal('${atk.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs bg-slate-900/70 hover:bg-slate-850 hover:border-amber-500/40 px-3 py-2 rounded-lg border border-slate-800/70 gap-2 cursor-pointer transition group ${championHighlightClass}">
                                                     <div class="flex items-center gap-2 flex-wrap">
                                                         <span class="font-bold text-amber-300 bg-amber-950/40 border border-amber-600/30 px-1.5 py-0.5 rounded">S${atk.slot}</span>
 
@@ -2045,7 +2080,7 @@ function mergeUniqueRows(existingRows, newRows) {
                                             const pointsColorClass = atk.isSuccessful ? 'text-emerald-400' : 'text-rose-500 font-black';
 
                                             return `
-                                            <div onclick="openBattleModal('${atk.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs bg-slate-900 hover:bg-slate-850 hover:border-amber-500/40 px-3 py-2 rounded-lg border border-slate-800/80 gap-2 cursor-pointer transition group">
+                                            <div onclick="openBattleModal('${atk.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs bg-slate-900 hover:bg-slate-850 hover:border-amber-500/40 px-3 py-2 rounded-lg border border-slate-800/80 gap-2 cursor-pointer transition group ${championHighlightClass}">
                                                 <div class="flex items-center gap-2 flex-wrap">
                                                     <span class="font-bold text-amber-300 bg-amber-950/40 border border-amber-600/30 px-1.5 py-0.5 rounded">S${atk.slot}</span>
                                                     
