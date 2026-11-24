@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Guild Wars Board - v1.98</title>
+    <title>Guild Wars Board - v1.99</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 	<!-- Firebase App (Base SDK) -->
@@ -18,9 +18,9 @@
         <header class="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-amber-400 flex items-center gap-2">
-                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v1.98</span>
+                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v1.99</span>
                 </h1>
-                <p class="text-xs text-slate-400">v1.98: displays attack suggestions</p>
+                <p class="text-xs text-slate-400">v1.99: reduces defense history to the active opponent</p>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
                 <span id="globalStatus" class="text-xs bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-slate-400">Database ready</span>
@@ -138,7 +138,11 @@
             activeKey: null,
             heroes: [],
             titans: [],
-            currentView: 'attacks'
+            currentView: 'attacks',
+            activeWarContext: {
+                ourMembersMap: new Map(),     // Map<userId, { id, name, lastLoginTime }>
+                enemyMembersMap: new Map()    // Map<userId, { id, name, lastLoginTime }>
+            }
         };
 
         // Seuil de points requis pour considérer qu'un défenseur a déjà été vaincu par le champion sélectionné
@@ -509,6 +513,45 @@ async function loadFromCloud(maxWeeks) {
 
         function getEnemyName(warData) {
             return warData.enemyName || warData.data?.enemyClan?.title || warData.enemyClanName || "Enemy Guild";
+        }
+
+        function extractMembersMapFromSlots(slotsData) {
+            const membersMap = new Map();
+            if (!slotsData || typeof slotsData !== 'object') return membersMap;
+
+            Object.values(slotsData).forEach(slotInfo => {
+                if (slotInfo && slotInfo.user && slotInfo.user.id) {
+                    const uId = String(slotInfo.user.id).trim();
+                    const uName = String(slotInfo.user.name || 'Unknown').trim();
+                    if (uId && !membersMap.has(uId)) {
+                        membersMap.set(uId, {
+                            id: uId,
+                            name: uName,
+                            lastLoginTime: Number(slotInfo.user.lastLoginTime || slotInfo.user.last_login_time || 0)
+                        });
+                    }
+                }
+            });
+            return membersMap;
+        }
+
+        function buildActiveWarGuildContext(warData) {
+            if (!warData || typeof warData !== 'object') {
+                appState.activeWarContext = {
+                    ourMembersMap: new Map(),
+                    enemyMembersMap: new Map()
+                };
+                return appState.activeWarContext;
+            }
+
+            const ourSlots = warData.data?.ourSlots || {};
+            const enemySlots = warData.data?.enemySlots || {};
+
+            appState.activeWarContext = {
+                ourMembersMap: extractMembersMapFromSlots(ourSlots),
+                enemyMembersMap: extractMembersMapFromSlots(enemySlots)
+            };
+            return appState.activeWarContext;
         }
 
         function switchView(view) {
@@ -1141,9 +1184,32 @@ function mergeUniqueRows(existingRows, newRows) {
             return hasTotem;
         }
 
-        function getDefenderAttacksHistory(defId, isTitan) {
+        function isRowFromAttackingGuild(row, attackingMembersMap) {
+            if (!(attackingMembersMap instanceof Map) || attackingMembersMap.size === 0) {
+                return false;
+            }
+            const rowAttId = String(row['attacker id'] || '').trim();
+            if (rowAttId && attackingMembersMap.has(rowAttId)) {
+                return true;
+            }
+            const rowAttName = String(row['att name'] || row['attacker name'] || '').trim().toLowerCase();
+            if (!rowAttName) return false;
+
+            for (const member of attackingMembersMap.values()) {
+                if (member.name && member.name.toLowerCase() === rowAttName) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function getDefenderAttacksHistory(defId, isTitan, viewMode = appState.currentView) {
             const cleanDefId = String(defId || '').trim();
             if (!cleanDefId) return [];
+
+            const ctx = appState.activeWarContext || {};
+            // En mode 'attacks', les attaquants doivent appartenir à notre guilde ; en mode 'defenses', à la guilde adverse
+            const attackingMembersMap = (viewMode === 'defenses') ? ctx.enemyMembersMap : ctx.ourMembersMap;
 
             const targetIsTitan = Boolean(isTitan);
             const extractMatchingRows = (rows) => {
@@ -1153,9 +1219,9 @@ function mergeUniqueRows(existingRows, newRows) {
                     let rowDefId = String(row['defender id'] || '').trim();
                     if (rowDefId !== cleanDefId) return;
 
-                    // Vérifie que la ligne correspond bien au type du slot (Titan vs Hero)
-                    // Si la ligne porte des indices explicites de pet/totem, on s'y fie en priorité ;
-                    // sinon on s'appuie sur la liste d'origine (appState.titans vs appState.heroes).
+                    // Filtrage par la guilde en attaque
+                    if (!isRowFromAttackingGuild(row, attackingMembersMap)) return;
+
                     const rowHasExplicitPetOrTotem = Boolean(
                         String(
                             row['attacker pet'] || row['att pet'] || row['attacker pets'] ||
@@ -1209,7 +1275,8 @@ function mergeUniqueRows(existingRows, newRows) {
             window._currentBattleModalContext = {
                 battleId: battleId,
                 isTitan: b.type === 'Titan',
-                defId: b.defId
+                defId: b.defId,
+                viewMode: appState.currentView
             };
 
             renderBattleModalContent(b);
@@ -1233,7 +1300,8 @@ function mergeUniqueRows(existingRows, newRows) {
             }
 
             const pointsColorClass = b.isSuccessful ? 'text-emerald-400' : 'text-rose-500';
-            const defenderAttacksHistory = getDefenderAttacksHistory(b.defId, isTitan);
+            const viewMode = window._currentBattleModalContext?.viewMode || appState.currentView;
+            const defenderAttacksHistory = getDefenderAttacksHistory(b.defId, isTitan, viewMode);
 
             function renderHistorySelect(historyList) {
                 if (!historyList || historyList.length === 0) {
@@ -1353,7 +1421,7 @@ function mergeUniqueRows(existingRows, newRows) {
             if (!container || isNaN(idx) || !window._currentBattleModalContext) return;
 
             const ctx = window._currentBattleModalContext;
-            const historyList = getDefenderAttacksHistory(ctx.defId, ctx.isTitan);
+            const historyList = getDefenderAttacksHistory(ctx.defId, ctx.isTitan, ctx.viewMode);
             
             const convertCSVDateFormat = (str) => {
                 if (!str) return 0;
@@ -1590,7 +1658,10 @@ function mergeUniqueRows(existingRows, newRows) {
             if (statusEl) statusEl.innerText = `✅ Active DB: ${Object.keys(appState.wars).length} war(s) | ${appState.heroes.length + appState.titans.length} tot. battles`;
 
             const data = appState.wars[appState.activeKey];
+            const guildCtx = buildActiveWarGuildContext(data);
             const enemyName = getEnemyName(data);
+            const ourMembersMap = guildCtx.ourMembersMap;
+            const enemyMembersMap = guildCtx.enemyMembersMap;
             const enemySlots = data.data?.enemySlots || {};
             const ourSlots = data.data?.ourSlots || {};
             const ourClanName = data.data?.ourClan?.title || "Our Guild";
@@ -1599,7 +1670,7 @@ function mergeUniqueRows(existingRows, newRows) {
             let warDateJs = warDateObj.iso ? new Date(warDateObj.iso + 'T00:00:00Z') : new Date();
 
             const activeChampion = typeof getSavedChampionName === 'function'
-                ? getSavedChampionName(getGuildChampionsList(ourSlots))
+                ? getSavedChampionName(getGuildChampionsList(ourMembersMap))
                 : '';
 
             const allKeys = getSortedWarKeys();
@@ -1658,37 +1729,35 @@ function mergeUniqueRows(existingRows, newRows) {
             collectAttackersFromRows(appState.heroes);
             collectAttackersFromRows(appState.titans);
 
-            function getInactivePlayersFromSlots(slotsData, clanTitle) {
-                let inactiveMap = new Map();
-                for (let [sId, sInfo] of Object.entries(slotsData)) {
-                    if (sInfo && sInfo.user && sInfo.user.id) {
-                        let uId = String(sInfo.user.id);
-                        if (!activeAttackerIds.has(uId) && !inactiveMap.has(uId)) {
-                            let tsVal = Number(sInfo.user.lastLoginTime || sInfo.user.last_login_time || 0);
-                            let loginDateJs = (tsVal > 0) ? new Date(tsVal > 1e12 ? tsVal : tsVal * 1000) : null;
-                            
-                            let daysInactive = 0;
-                            if (loginDateJs && !isNaN(loginDateJs.getTime())) {
-                                let diffTime = warDateJs.getTime() - loginDateJs.getTime();
-                                daysInactive = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
-                            }
+            function getInactivePlayersFromMembersMap(membersMap, clanTitle) {
+                let list = [];
+                if (!(membersMap instanceof Map)) return list;
 
-                            inactiveMap.set(uId, {
-                                name: sInfo.user.name || 'Unknown',
-                                clan: clanTitle,
-                                daysInactive: daysInactive,
-                                lastLogin: formatLoginDate(tsVal)
-                            });
+                membersMap.forEach((member, uId) => {
+                    if (!activeAttackerIds.has(uId)) {
+                        let tsVal = Number(member.lastLoginTime || 0);
+                        let loginDateJs = (tsVal > 0) ? new Date(tsVal > 1e12 ? tsVal : tsVal * 1000) : null;
+                        
+                        let daysInactive = 0;
+                        if (loginDateJs && !isNaN(loginDateJs.getTime())) {
+                            let diffTime = warDateJs.getTime() - loginDateJs.getTime();
+                            daysInactive = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
                         }
+
+                        list.push({
+                            name: member.name || 'Unknown',
+                            clan: clanTitle,
+                            daysInactive: daysInactive,
+                            lastLogin: formatLoginDate(tsVal)
+                        });
                     }
-                }
-                let list = Array.from(inactiveMap.values());
+                });
                 list.sort((a, b) => b.daysInactive - a.daysInactive);
                 return list;
             }
 
-            const ourInactives = getInactivePlayersFromSlots(ourSlots, ourClanName);
-            const enemyInactives = getInactivePlayersFromSlots(enemySlots, enemyName);
+            const ourInactives = getInactivePlayersFromMembersMap(ourMembersMap, ourClanName);
+            const enemyInactives = getInactivePlayersFromMembersMap(enemyMembersMap, enemyName);
 
             window._activeBattlesMap.clear();
             let battleCounter = 0;
@@ -1947,7 +2016,7 @@ function mergeUniqueRows(existingRows, newRows) {
             let enemyScoreColor = enemyScore > ourScore ? "text-emerald-400 font-black" : (ourScore > enemyScore ? "text-rose-400 font-black" : "text-amber-400 font-black");
 
             const championSelectorMarkup = typeof renderChampionSelectorHTML === 'function'
-                ? renderChampionSelectorHTML(ourSlots, escapeHtml)
+                ? renderChampionSelectorHTML(ourMembersMap, escapeHtml)
                 : '';
 
             dash.innerHTML = `
