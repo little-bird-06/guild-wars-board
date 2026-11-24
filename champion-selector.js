@@ -1,21 +1,18 @@
 const CHAMPION_STORAGE_KEY = 'hw_selected_champion';
 const DEFAULT_WIN_POINTS_THRESHOLD = 20;
 
-function getGuildChampionsList(slotsData) {
-    if (!slotsData || typeof slotsData !== 'object') return [];
+function getGuildChampionsList(membersMap) {
+    if (!(membersMap instanceof Map)) return [];
 
-    const championsById = new Map();
-    Object.values(slotsData).forEach((slotInfo) => {
-        if (slotInfo && slotInfo.user && slotInfo.user.id) {
-            const uId = String(slotInfo.user.id);
-            const name = String(slotInfo.user.name || '').trim();
-            if (name && !championsById.has(uId)) {
-                championsById.set(uId, name);
-            }
+    const champions = [];
+    membersMap.forEach((member) => {
+        const name = String(member?.name || '').trim();
+        if (name) {
+            champions.push(name);
         }
     });
 
-    return Array.from(championsById.values()).sort((a, b) =>
+    return Array.from(new Set(champions)).sort((a, b) =>
         a.localeCompare(b, undefined, { sensitivity: 'base' })
     );
 }
@@ -52,8 +49,8 @@ function onChampionSelectChange(selectedName) {
     }
 }
 
-function renderChampionSelectorHTML(slotsData, escapeFn = (s) => String(s)) {
-    const champions = getGuildChampionsList(slotsData);
+function renderChampionSelectorHTML(sourceData, escapeFn = (s) => String(s)) {
+    const champions = getGuildChampionsList(sourceData);
     const activeChampion = getSavedChampionName(champions);
 
     const optionsHTML = champions
