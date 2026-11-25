@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Guild Wars Board - v2.00</title>
+    <title>Guild Wars Board - v2.01</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 	<!-- Firebase App (Base SDK) -->
@@ -18,9 +18,9 @@
         <header class="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-amber-400 flex items-center gap-2">
-                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v2.00</span>
+                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v2.01</span>
                 </h1>
-                <p class="text-xs text-slate-400">v2.00: cleaning</p>
+                <p class="text-xs text-slate-400">v2.01: Highlights victories in green and good attacks (>15) in white</p>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
                 <span id="globalStatus" class="text-xs bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-slate-400">Database ready</span>
@@ -146,7 +146,7 @@
         };
 
         // Seuil de points requis pour considérer qu'un défenseur a déjà été vaincu par le champion sélectionné
-        const CHAMPION_WIN_POINTS_THRESHOLD = 20;
+        const CHAMPION_WIN_POINTS_THRESHOLD = 15;
 
         const FORTIFICATIONS = [
             { name: "Mage Academy", slots: [1, 2], bonus: 40 },
@@ -2143,7 +2143,7 @@ function mergeUniqueRows(existingRows, newRows) {
                                             const isBeatenByChampion =
                                                 appState.currentView === 'attacks' &&
                                                 Boolean(activeChampion) &&
-                                                typeof hasChampionBeatenDefender === 'function' &&
+                                                typeof hasChampionBeatenDefender === 'function' ?
                                                 hasChampionBeatenDefender(
                                                     activeChampion,
                                                     atk.defId,
@@ -2152,7 +2152,7 @@ function mergeUniqueRows(existingRows, newRows) {
                                                     appState.heroes,
                                                     appState.titans,
                                                     CHAMPION_WIN_POINTS_THRESHOLD
-                                                );
+                                                ) : '';
 
                                             const championHighlightClass =
                                                 typeof getChampionSlotHighlightClass === 'function'
