@@ -1,5 +1,4 @@
 const CHAMPION_STORAGE_KEY = 'hw_selected_champion';
-const DEFAULT_WIN_POINTS_THRESHOLD = 20;
 
 function getGuildChampionsList(membersMap) {
     if (!(membersMap instanceof Map)) return [];
@@ -83,28 +82,30 @@ function hasChampionBeatenDefender(
     battleType,
     heroRows,
     titanRows,
-    winPointsThreshold = DEFAULT_WIN_POINTS_THRESHOLD
+    winPointsThreshold
 ) {
     const cleanChamp = String(championName || '').trim().toLowerCase();
-    if (!cleanChamp) return false;
+    if (!cleanChamp) return '';
 
     const isTitanSlot = String(battleType || '').trim().toLowerCase() === 'titan';
     const targetRows = isTitanSlot ? titanRows : heroRows;
 
     if (!Array.isArray(targetRows) || targetRows.length === 0) {
-        return false;
+        return '';
     }
 
     const cleanDefId = String(defenderId || '').trim();
     const cleanDefName = String(defenderName || '').trim().toLowerCase();
     const threshold = Number(winPointsThreshold);
-    const minPts = isNaN(threshold) ? DEFAULT_WIN_POINTS_THRESHOLD : threshold;
+    const minPts = isNaN(threshold) ? 20 : threshold;
+    
+    let bestMatch = 'failed'; // failed, damaged, victory
 
-    return targetRows.some((row) => {
-        if (!row || typeof row !== 'object') return false;
+    for (const row of targetRows) {
+        if (!row || typeof row !== 'object') continue;
 
         const attName = String(row['att name'] || row['attacker name'] || '').trim().toLowerCase();
-        if (attName !== cleanChamp) return false;
+        if (attName !== cleanChamp) continue;
 
         const rowDefId = String(row['defender id'] || '').trim();
         const rowDefName = String(row['def name'] || '').trim().toLowerCase();
@@ -113,15 +114,24 @@ function hasChampionBeatenDefender(
             (cleanDefId && rowDefId && rowDefId === cleanDefId) ||
             (cleanDefName && rowDefName && rowDefName === cleanDefName);
 
-        if (!sameDefender) return false;
+        if (!sameDefender) continue;
 
         const pts = parseInt(row['points'], 10);
-        return !isNaN(pts) && pts >= minPts;
-    });
+        if (isNaN(pts) || pts < minPts) continue;
+        
+        if (pts >= 20) return 'victory'; // on stoppe à la 1ere victoire
+        bestMatch= 'damaged';
+    }
+    
+    return bestMatch;
 }
 
-function getChampionSlotHighlightClass(isHighlighted) {
-    return isHighlighted
-        ? '!border-2 !border-emerald-400 !bg-emerald-900/50 ring-2 ring-inset ring-emerald-400/50 shadow-[inset_0_0_16px_rgba(16,185,129,0.45)] animate-pulse'
-        : '';
+function getChampionSlotHighlightClass(matchType) {
+    if (matchType === 'victory') {
+        return '!border-2 !border-emerald-400 !bg-emerald-900/50 ring-2 ring-inset ring-emerald-400/50 shadow-[inset_0_0_16px_rgba(16,185,129,0.45)] animate-pulse';
+    }
+    if (matchType === 'damaged') {
+    	return '!border-2 !border-white !bg-white/15 ring-2 ring-inset ring-white/50 shadow-[inset_0_0_16px_rgba(255,255,255,0.3)] animate-pulse';
+    }
+    return '';
 }
