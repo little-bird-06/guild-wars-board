@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Guild Wars Board - v1.99</title>
+    <title>Guild Wars Board - v2.00</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 	<!-- Firebase App (Base SDK) -->
@@ -18,15 +18,15 @@
         <header class="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-amber-400 flex items-center gap-2">
-                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v1.99</span>
+                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v2.00</span>
                 </h1>
-                <p class="text-xs text-slate-400">v1.99: reduces defense history to the active opponent</p>
+                <p class="text-xs text-slate-400">v2.00: cleaning</p>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
                 <span id="globalStatus" class="text-xs bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-slate-400">Database ready</span>
-                <! button onclick="openAdminModal()" class="bg-slate-800 hover:bg-slate-700 text-amber-400 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 border border-slate-700 shadow-md" title="Admin Panel">
-                    <span>🔒</span> Admin
-                </button>
+                <button id="adminBtn" onclick="openAdminModal()" class="hidden bg-slate-800 hover:bg-slate-700 text-amber-400 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 border border-slate-700 shadow-md" title="Admin Panel">
+    				<span>🔒</span> Admin
+				</button>
             </div>
         </header>
 
@@ -172,12 +172,20 @@
     		appId: "1:48502757594:web:55247df5d920e90b29ede3"
   		};
   		
-  		// pour lancer l'app en mode tests: ?mode=test
+  		// pour lancer l'app en mode admin: ?admin=1
   		const urlParams = new URLSearchParams(window.location.search);
-  		const PRODUCTION_MODE = urlParams.get("mode") === "test" ? 0 : 1;
+  		const IS_ADMIN_MODE = urlParams.get("admin") === "1";
+  		
+  		if (IS_ADMIN_MODE) {
+    		const adminBtn = document.getElementById('adminBtn');
+    		if (adminBtn) adminBtn.classList.remove('hidden');
+		}
+
+  		// pour lancer l'app avec la DB de tests: ?preview=1
+  		const IS_PREVIEW_MODE = urlParams.get("preview") === "1";
 
   		// Nom de la guilde pour Firestore (en PROD= le nom de la guilde, en DEV= "test" pour ne pas perturber l'app online)
-  		const MY_GUILD_ID = PRODUCTION_MODE === 1 ? "Pew Pew" : "test";	// sélectionne la bonne DB
+  		const MY_GUILD_ID = IS_PREVIEW_MODE ? "test" : "Pew Pew";	// sélectionne la bonne DB
             
 		// Initialisation de Firebase
 		firebase.initializeApp(firebaseConfig);
@@ -188,6 +196,7 @@
 	
         document.addEventListener('DOMContentLoaded', async () => {
             try {
+            	localStorage.removeItem('hw_gvg_db'); // efface les données du local storage utilisées dans les 1eres versions
             	reloadApplication();
             } catch (err) {
                 console.error("Erreur critique au chargement :", err);
@@ -413,19 +422,12 @@ async function loadFromCloud(maxWeeks) {
 }
 
         function openAdminModal() {
+        	if (!IS_ADMIN_MODE) return;
             document.getElementById('adminModal').classList.remove('hidden');
         }
 
         function closeAdminModal() {
             document.getElementById('adminModal').classList.add('hidden');
-        }
-
-        function saveToLocalStorage() {
-            try {
-                localStorage.setItem('hw_gvg_db', JSON.stringify(appState));
-            } catch(err) {
-                console.warn("Erreur sauvegarde localStorage :", err);
-            }
         }
 
         async function exportGlobalBackup() {
@@ -494,6 +496,31 @@ async function loadFromCloud(maxWeeks) {
                 closeAdminModal();
             }
         }
+        
+        function resetDatabase() {
+		    if (confirm("⚠️ WARNING: Do you really want to purge the entire local database? This action is irreversible!")) {
+        		localStorage.removeItem('hw_gvg_db');
+        		appState = {
+            		wars: {},
+            		activeKey: null,
+            		heroes: [],
+            		titans: [],
+            		currentView: 'attacks',
+            		activeWarContext: {
+                		ourGuildName: 'Our Guild',
+                		enemyGuildName: 'Enemy Guild',
+                		ourMembersMap: new Map(),
+                		enemyMembersMap: new Map()
+            		}
+        		};
+        		const logEl = document.getElementById('smartImportLog');
+        		if (logEl) logEl.innerText = 'Database purged';
+        		updateNavigationUI();
+        		updateDatabaseUI();
+        		renderDashboard();
+        		closeAdminModal();
+    		}
+		}
 
         function deleteActiveWar() {
             if (!appState.activeKey || !appState.wars[appState.activeKey]) return;
@@ -501,7 +528,6 @@ async function loadFromCloud(maxWeeks) {
                 delete appState.wars[appState.activeKey];
                 const keys = getSortedWarKeys();
                 appState.activeKey = keys.length > 0 ? keys[0] : null;
-                saveToLocalStorage();
                 updateNavigationUI();
                 renderDashboard();
             }
@@ -512,8 +538,24 @@ async function loadFromCloud(maxWeeks) {
         }
 
         function getEnemyName(warData) {
-            return warData.enemyName || warData.data?.enemyClan?.title || warData.enemyClanName || "Enemy Guild";
+            return warData.enemyName || warData.data?.enemyClan?.title || "Enemy Guild";
         }
+        
+        function getOurClanName(warData) {
+    		const ourSlots = warData?.data?.ourSlots;
+    		if (ourSlots && typeof ourSlots === 'object') {
+        		for (const slotInfo of Object.values(ourSlots)) {
+            		if (slotInfo && slotInfo.user && typeof slotInfo.user.clanTitle === 'string') {
+                		const title = slotInfo.user.clanTitle.trim();
+                		if (title.length > 0) {
+                    	return title;
+                		}
+            		}
+        		}
+    		}
+    		return "Our Guild";
+		}
+
 
         function extractMembersMapFromSlots(slotsData) {
             const membersMap = new Map();
@@ -571,7 +613,6 @@ async function loadFromCloud(maxWeeks) {
                 if (currentIndex >= keys.length) currentIndex = keys.length - 1;
             }
             appState.activeKey = keys[currentIndex];
-            saveToLocalStorage();
             updateNavigationUI();
             renderDashboard();
         }
@@ -588,7 +629,6 @@ async function loadFromCloud(maxWeeks) {
             if (currentIdx < 0) currentIdx = 0;
             if (currentIdx >= enemyWarKeys.length) currentIdx = enemyWarKeys.length - 1;
             appState.activeKey = enemyWarKeys[currentIdx];
-            saveToLocalStorage();
             updateNavigationUI();
             renderDashboard();
         }
@@ -660,7 +700,6 @@ async function loadFromCloud(maxWeeks) {
 
         function selectEnemyWar(warKey) {
             appState.activeKey = warKey;
-            saveToLocalStorage();
             updateNavigationUI();
             renderDashboard();
             closeEnemyModal();
@@ -1664,7 +1703,7 @@ function mergeUniqueRows(existingRows, newRows) {
             const enemyMembersMap = guildCtx.enemyMembersMap;
             const enemySlots = data.data?.enemySlots || {};
             const ourSlots = data.data?.ourSlots || {};
-            const ourClanName = data.data?.ourClan?.title || "Our Guild";
+            const ourClanName = getOurClanName(data);
             const maxAttacks = 30;
             const warDateObj = extractDateForWar(appState.activeKey, data);
             let warDateJs = warDateObj.iso ? new Date(warDateObj.iso + 'T00:00:00Z') : new Date();
