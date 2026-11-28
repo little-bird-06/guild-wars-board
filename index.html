@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Guild Wars Board - v2.01</title>
+    <title>Guild Wars Board - v2.1</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 	<!-- Firebase App (Base SDK) -->
@@ -11,6 +11,7 @@
 	<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
 	<!-- Champion Selector & Highlight Module -->
 	<script src="champion-selector.js"></script>
+	<script src="attack-planner.js"></script>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen p-6 font-sans">
     <div class="max-w-7xl mx-auto space-y-6">
@@ -18,9 +19,9 @@
         <header class="flex flex-col md:flex-row justify-between items-center border-b border-slate-800 pb-4 gap-4">
             <div>
                 <h1 class="text-2xl font-bold text-amber-400 flex items-center gap-2">
-                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v2.01</span>
+                    <span>⚔️</span> Guild Wars Board <span class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-mono">v2.1</span>
                 </h1>
-                <p class="text-xs text-slate-400">v2.01: Highlights victories in green and good attacks (>15) in white</p>
+                <p class="text-xs text-slate-400">v2.1: Planning Assistant (experimental)</p>
             </div>
             <div class="flex items-center gap-2 flex-wrap">
                 <span id="globalStatus" class="text-xs bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-lg text-slate-400">Database ready</span>
@@ -149,18 +150,23 @@
         const CHAMPION_WIN_POINTS_THRESHOLD = 15;
 
         const FORTIFICATIONS = [
-            { name: "Mage Academy", slots: [1, 2], bonus: 40 },
-            { name: "Lighthouse", slots: [3, 4], bonus: 40 },
-            { name: "Barracks", slots: [5, 6], bonus: 40 },
-            { name: "Bridge", slots: [7, 8, 9], bonus: 60 },
-            { name: "Spring of Elements", slots: [10, 11, 12], bonus: 60 },
-            { name: "Foundry", slots: [13, 14, 15], bonus: 60 },
-            { name: "Gate of Nature", slots: [16, 17, 18], bonus: 60 },
-            { name: "Bastion of Fire", slots: [19, 20, 21], bonus: 60 },
-            { name: "Bastion of Ice", slots: [22, 23, 24], bonus: 60 },
-            { name: "Citadel", slots: [25, 26, 27, 28, 29, 30], bonus: 120 }
+            { name: "Mage Academy", slots: [1, 2], bonus: 40, type: "Hero" },
+            { name: "Lighthouse", slots: [3, 4], bonus: 40, type: "Hero" },
+            { name: "Barracks", slots: [5, 6], bonus: 40, type: "Hero" },
+            { name: "Bridge", slots: [7, 8, 9], bonus: 60, type: "Titan" },
+            { name: "Spring of Elements", slots: [10, 11, 12], bonus: 60, type: "Titan" },
+            { name: "Foundry", slots: [13, 14, 15], bonus: 60, type: "Hero" },
+            { name: "Gate of Nature", slots: [16, 17, 18], bonus: 60, type: "Titan" },
+            { name: "Bastion of Fire", slots: [19, 20, 21], bonus: 60, type: "Titan" },
+            { name: "Bastion of Ice", slots: [22, 23, 24], bonus: 60, type: "Titan" },
+            { name: "Citadel", slots: [25, 26, 27, 28, 29, 30], bonus: 120, type: "Hero" }
         ];
         
+        function isTitanSlot(sId) {
+            const fort = FORTIFICATIONS.find(f => f.slots.includes(Number(sId)));
+            return fort ? fort.type === 'Titan' : false;
+        }
+
         // --- CONFIGURATION FIREBASE ---
           // Your web app's Firebase configuration
   		const firebaseConfig = {
@@ -362,7 +368,7 @@ async function importBackupFile(event) {
     reader.readAsText(file);
 }
 
-// --- CHARGEMENT DIRECT DANS APPSATE DEpuis FIRESTORE ---
+// --- CHARGEMENT DIRECT DANS APPSATE DEPUIS FIRESTORE ---
 async function loadFromCloud(maxWeeks) {
     console.log(`📥 Chargement des données depuis le Cloud (Limite: ${maxWeeks === null ? 'Illimitée' : maxWeeks} semaines)...`);
     const statusEl = document.getElementById('globalStatus');
@@ -487,7 +493,17 @@ async function loadFromCloud(maxWeeks) {
         function resetDatabase() {
             if (confirm("⚠️ WARNING: Do you really want to purge the entire local database? This action is irreversible!")) {
                 localStorage.removeItem('hw_gvg_db');
-                appState = { wars: {}, activeKey: null, heroes: [], titans: [], currentView: 'attacks' };
+                appState = {
+                    wars: {},
+                    activeKey: null,
+                    heroes: [],
+                    titans: [],
+                    currentView: 'attacks',
+                    activeWarContext: {
+                        ourMembersMap: new Map(),
+                        enemyMembersMap: new Map()
+                    }
+                };
                 const logEl = document.getElementById('smartImportLog');
                 if (logEl) logEl.innerText = 'Database purged';
                 updateNavigationUI();
@@ -496,31 +512,6 @@ async function loadFromCloud(maxWeeks) {
                 closeAdminModal();
             }
         }
-        
-        function resetDatabase() {
-		    if (confirm("⚠️ WARNING: Do you really want to purge the entire local database? This action is irreversible!")) {
-        		localStorage.removeItem('hw_gvg_db');
-        		appState = {
-            		wars: {},
-            		activeKey: null,
-            		heroes: [],
-            		titans: [],
-            		currentView: 'attacks',
-            		activeWarContext: {
-                		ourGuildName: 'Our Guild',
-                		enemyGuildName: 'Enemy Guild',
-                		ourMembersMap: new Map(),
-                		enemyMembersMap: new Map()
-            		}
-        		};
-        		const logEl = document.getElementById('smartImportLog');
-        		if (logEl) logEl.innerText = 'Database purged';
-        		updateNavigationUI();
-        		updateDatabaseUI();
-        		renderDashboard();
-        		closeAdminModal();
-    		}
-		}
 
         function deleteActiveWar() {
             if (!appState.activeKey || !appState.wars[appState.activeKey]) return;
@@ -924,7 +915,6 @@ async function processCSVTextParsed(incomingRows, type) {
     }
 }
 
-
 function mergeUniqueRows(existingRows, newRows) {
     const uniqueMap = new Map();
 
@@ -943,7 +933,6 @@ function mergeUniqueRows(existingRows, newRows) {
     // 3. On retourne le tableau combiné et dédupliqué
     return Array.from(uniqueMap.values());
 }
-
 
         function updateDatabaseUI() {
             const hMeta = document.getElementById('heroMeta');
@@ -1712,6 +1701,30 @@ function mergeUniqueRows(existingRows, newRows) {
                 ? getSavedChampionName(getGuildChampionsList(ourMembersMap))
                 : '';
 
+            // Planification des attaques parfaites (suggestions par slot)
+            const plannedBySlot = new Map();
+            if (appState.currentView === 'attacks' && typeof planPerfectAttacks === 'function') {
+                const plannedAssignments = planPerfectAttacks(
+                    ourMembersMap,
+                    enemySlots,
+                    appState.heroes,
+                    appState.titans,
+                    2,
+                    CHAMPION_WIN_POINTS_THRESHOLD
+                );
+                
+                plannedAssignments.forEach(item => {
+                    const slotNum = Number(item.slot);
+                    if (!plannedBySlot.has(slotNum)) {
+                        plannedBySlot.set(slotNum, []);
+                    }
+                    plannedBySlot.get(slotNum).push({
+                        name: item.championName,
+                        pastPoints: Number(item.pastPoints || 0)
+                    });
+                });
+            }
+
             const allKeys = getSortedWarKeys();
             const enemyWarKeys = allKeys.filter(k => getEnemyName(appState.wars[k]) === enemyName);
             const enemyWarIndex = enemyWarKeys.indexOf(appState.activeKey);
@@ -1949,7 +1962,7 @@ function mergeUniqueRows(existingRows, newRows) {
                             defPower: "",
                             slot: sId,
                             points: pointsVal,
-                            type: sId >= 8 && sId <= 24 ? "Titan" : "Hero",
+                            type: isTitanSlot(sId) ? "Titan" : "Hero",
                             timeOnly: "",
                             dateTimeFull: "",
                             cumulBefore: 0,
@@ -1968,7 +1981,7 @@ function mergeUniqueRows(existingRows, newRows) {
                             let defName = slotInfo?.user?.name || `Slot ${sId}`;
                             let defId = slotInfo?.user?.id ? String(slotInfo.user.id) : '';
                             let slotDefPower = getSlotDefenderPower(slotInfo);
-                            let teamType = (slotInfo?.team && slotInfo.team[0] && slotInfo.team[0]['1'] && slotInfo.team[0]['1'].type) || (sId >= 8 && sId <= 24 ? 'titan' : 'hero');
+                            let teamType = (slotInfo?.team && slotInfo.team[0] && slotInfo.team[0]['1'] && slotInfo.team[0]['1'].type) || (isTitanSlot(sId) ? 'titan' : 'hero');
                             let unattackedEntry = {
                                 id: bId,
                                 attacker: "No attacker",
@@ -2058,6 +2071,13 @@ function mergeUniqueRows(existingRows, newRows) {
                 ? renderChampionSelectorHTML(ourMembersMap, escapeHtml)
                 : '';
 
+            function getFortTypeBadgeHTML(fortType) {
+                if (fortType === 'Titan') {
+                    return `<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 font-semibold">Titan</span>`;
+                }
+                return `<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 font-semibold">Hero</span>`;
+            }
+
             dash.innerHTML = `
                 <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
                     <div class="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col justify-between shadow-lg hover:border-amber-500/50 transition cursor-pointer group" onclick="openEnemyModal()" title="Click to choose an opponent">
@@ -2113,10 +2133,11 @@ function mergeUniqueRows(existingRows, newRows) {
                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         ${currentData.fortResults.map(f => `
                             <div class="bg-slate-950 border ${f.allWon ? 'border-emerald-500/50 bg-emerald-950/10' : 'border-slate-800'} p-4 rounded-xl space-y-3">
-                                <div class="flex justify-between items-center border-b border-slate-800 pb-2">
-                                    <div>
+                                <div class="flex justify-between items-center border-b border-slate-800 pb-2 gap-2 flex-wrap">
+                                    <div class="flex items-center gap-2 flex-wrap">
                                         <span class="font-bold text-slate-200 text-sm">${f.name}</span>
-                                        <span class="text-xs text-slate-500 ml-2">(Slots: ${f.slots.join(', ')})</span>
+                                        ${getFortTypeBadgeHTML(f.type)}
+                                        <span class="text-xs text-slate-500">(Slots: ${f.slots.join(', ')})</span>
                                     </div>
                                     <span class="text-xs px-2 py-0.5 rounded font-semibold ${f.allWon ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}">
                                         ${f.allWon ? `Captured (+${f.bonus} pts)` : `Bonus: +${f.bonus} pts`}
@@ -2138,7 +2159,24 @@ function mergeUniqueRows(existingRows, newRows) {
                                                 `;
                                             }
 
-                                            const isTitanBattle = atk.type === 'Titan';
+											const suggestedChampions =
+                                                appState.currentView === 'attacks' ? (plannedBySlot.get(Number(atk.slot)) || []) : [];
+
+                                            const suggestionChipsHtml = suggestedChampions.length > 0
+                                                ? suggestedChampions.map(sugg => {
+                                                    const isConfirmedWin = Number(sugg.pastPoints) === 20;
+                                                    const chipClasses = isConfirmedWin
+                                                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                                                        : 'bg-emerald-500/15 text-white border-slate-300';
+                                                    const tooltip = `${sugg.pastPoints} pts`;
+
+                                                    return `
+                                                        <span class="text-[8px] font-semibold px-1 py-0 rounded-full border whitespace-nowrap ${chipClasses}" title="${escapeHtml(tooltip)}">
+                                                            🎯 ${escapeHtml(sugg.name)}
+                                                        </span>
+                                                    `;
+                                                }).join('')
+                                                : '';
 
                                             const isBeatenByChampion =
                                                 appState.currentView === 'attacks' &&
@@ -2161,7 +2199,7 @@ function mergeUniqueRows(existingRows, newRows) {
 
                                             if (atk.isUnattackedSlot) {
                                                 return `
-                                                <div onclick="openBattleModal('${atk.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs bg-slate-900/70 hover:bg-slate-850 hover:border-amber-500/40 px-3 py-2 rounded-lg border border-slate-800/70 gap-2 cursor-pointer transition group ${championHighlightClass}">
+                                                <div onclick="openBattleModal('${atk.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-[10px] bg-slate-900/70 hover:bg-slate-850 hover:border-amber-500/40 px-3 py-2 rounded-lg border border-slate-800/70 gap-2 cursor-pointer transition group ${championHighlightClass}">
                                                     <div class="flex items-center gap-2 flex-wrap">
                                                         <span class="font-bold text-amber-300 bg-amber-950/40 border border-amber-600/30 px-1.5 py-0.5 rounded">S${atk.slot}</span>
 
@@ -2175,8 +2213,8 @@ function mergeUniqueRows(existingRows, newRows) {
                                                         </div>
                                                     </div>
 
-                                                    <div class="flex items-center gap-2 self-end sm:self-auto">
-                                                        <span class="text-[10px] px-1.5 py-0.5 rounded ${!isTitanBattle ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}">${atk.type}</span>
+                                                    <div class="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+                                                        ${suggestionChipsHtml}
                                                         <span class="font-mono font-bold text-slate-400 text-sm" title="Slot total: ${atk.cumulAfter}/20 pts">+${atk.points}</span>
                                                     </div>
                                                 </div>
@@ -2188,7 +2226,7 @@ function mergeUniqueRows(existingRows, newRows) {
                                             const pointsColorClass = atk.isSuccessful ? 'text-emerald-400' : 'text-rose-500 font-black';
 
                                             return `
-                                            <div onclick="openBattleModal('${atk.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs bg-slate-900 hover:bg-slate-850 hover:border-amber-500/40 px-3 py-2 rounded-lg border border-slate-800/80 gap-2 cursor-pointer transition group ${championHighlightClass}">
+                                            <div onclick="openBattleModal('${atk.id}')" class="flex flex-col sm:flex-row justify-between items-start sm:items-center text-[10px] bg-slate-900 hover:bg-slate-850 hover:border-amber-500/40 px-3 py-2 rounded-lg border border-slate-800/80 gap-2 cursor-pointer transition group ${championHighlightClass}">
                                                 <div class="flex items-center gap-2 flex-wrap">
                                                     <span class="font-bold text-amber-300 bg-amber-950/40 border border-amber-600/30 px-1.5 py-0.5 rounded">S${atk.slot}</span>
                                                     
@@ -2204,11 +2242,11 @@ function mergeUniqueRows(existingRows, newRows) {
                                                         ${atk.defPower ? `<span class="text-[11px] font-mono text-purple-300 font-bold bg-purple-950/40 px-1 rounded">${atk.defPower}</span>` : ''}
                                                     </div>
 
-                                                    ${atk.timeOnly ? `<span class="text-slate-400 text-[10px] ml-auto sm:ml-1 font-mono bg-slate-800 px-1.5 py-0.5 rounded">[${atk.timeOnly}]</span>` : ''}
+                                                    ${atk.timeOnly ? `<span class="text-slate-400 text-[8px] ml-auto sm:ml-1 font-mono bg-slate-800 px-1.5 py-0.5 rounded">[${atk.timeOnly}]</span>` : ''}
                                                 </div>
 
-                                                <div class="flex items-center gap-2 self-end sm:self-auto">
-                                                    <span class="text-[10px] px-1.5 py-0.5 rounded ${!isTitanBattle ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}">${atk.type}</span>
+                                                <div class="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+                                                    ${suggestionChipsHtml}
                                                     <span class="font-mono font-bold ${pointsColorClass} text-sm" title="Slot total: ${atk.cumulAfter}/20 pts">+${atk.points}</span>
                                                 </div>
                                             </div>
